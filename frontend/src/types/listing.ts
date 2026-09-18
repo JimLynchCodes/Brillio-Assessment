@@ -5,6 +5,7 @@ export interface Listing {
   bedrooms: number;
   city: string;
   description: string;
+  score?: number | null;
 }
 
 export interface SearchFiltersState {
@@ -16,7 +17,7 @@ export interface SearchFiltersState {
   targetBudget: string;
 }
 
-export interface SearchResponse {
+export interface ListingResponse {
   items: Listing[];
   nextCursor: string;
   hasMore: boolean;

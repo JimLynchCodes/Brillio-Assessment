@@ -1,12 +1,13 @@
-import type { SearchFiltersState, SearchResponse } from '../types/listing';
+import type { ListingResponse, SearchFiltersState } from '../types/listing';
 
-export async function fetchListings(
+export const fetchListings = async (
   filters: SearchFiltersState,
   cursor: string = '',
   limit: number = 6
-): Promise<SearchResponse> {
+): Promise<ListingResponse> => {
   const params = new URLSearchParams();
 
+  if (filters.targetBudget) params.append('targetBudget', filters.targetBudget);
   if (filters.minPrice) params.append('minPrice', filters.minPrice);
   if (filters.maxPrice) params.append('maxPrice', filters.maxPrice);
   if (filters.minBedrooms) params.append('minBedrooms', filters.minBedrooms);
@@ -19,8 +20,8 @@ export async function fetchListings(
   const response = await fetch(`http://localhost:8080/api/listings?${params.toString()}`);
 
   if (!response.ok) {
-    throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+    throw new Error(`API Error: ${response.statusText}`);
   }
 
   return response.json();
-}
+};

@@ -18,7 +18,9 @@ const initialFilters: SearchFiltersState = {
 export const SearchFilters: React.FC<SearchFiltersProps> = ({ onSearch, isLoading }) => {
   const [filters, setFilters] = useState<SearchFiltersState>(initialFilters);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
     const { name, value } = e.target;
     setFilters((prev) => ({ ...prev, [name]: value }));
   };
@@ -37,6 +39,18 @@ export const SearchFilters: React.FC<SearchFiltersProps> = ({ onSearch, isLoadin
     <div style={styles.card}>
       <form onSubmit={handleSubmit}>
         <div style={styles.formGrid}>
+          <div style={styles.field}>
+            <label style={styles.targetLabel}>🎯 Target Budget (Scoring)</label>
+            <input
+              type="number"
+              name="targetBudget"
+              placeholder="e.g. 400000"
+              value={filters.targetBudget}
+              onChange={handleChange}
+              style={styles.targetInput}
+            />
+          </div>
+
           <div style={styles.field}>
             <label style={styles.label}>Min Price</label>
             <input
@@ -104,7 +118,7 @@ export const SearchFilters: React.FC<SearchFiltersProps> = ({ onSearch, isLoadin
 
         <div style={styles.actions}>
           <button type="submit" disabled={isLoading} style={styles.searchBtn}>
-            {isLoading ? 'Searching...' : 'Search Properties'}
+            {isLoading ? 'Searching...' : 'Search & Rank Properties'}
           </button>
           <button type="button" onClick={handleReset} style={styles.resetBtn}>
             Reset
@@ -140,6 +154,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: '#334155',
   },
+  targetLabel: {
+    fontSize: '13px',
+    fontWeight: 700,
+    color: '#0369a1',
+  },
   input: {
     padding: '10px 14px',
     borderRadius: '8px',
@@ -148,6 +167,16 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     backgroundColor: '#f8fafc',
     color: '#0f172a',
+  },
+  targetInput: {
+    padding: '10px 14px',
+    borderRadius: '8px',
+    border: '2px solid #38bdf8',
+    fontSize: '14px',
+    outline: 'none',
+    backgroundColor: '#f0f9ff',
+    color: '#0c4a6e',
+    fontWeight: 600,
   },
   actions: {
     display: 'flex',

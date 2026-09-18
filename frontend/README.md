@@ -1,3 +1,32 @@
+
+
+
+
+## Percentage Match Scoring Architecture
+
+When a `Target Budget` is submitted through the search filter, the system calculates a dynamic percentage match score for each listing relative to the user's budget.
+
+### Calculation Formula
+
+$$\text{Match Percentage} = \max\left(0, 100 - \left(\frac{\vert{}\text{Price} - \text{Target Budget}\vert{}}{\text{Target Budget}} \times 100\right)\right)$$
+
+* **100% Match:** Exact price equality ($\text{Price} = \text{Target Budget}$).
+* **Proportional Decay:** A listing priced $10\%$ above or below target yields a $90\%$ match.
+* **Floor:** Clamped to a minimum of $0\%$ for extreme deviations.
+
+### Results Ranking & Display
+
+1. **Descending Order:** Search results sort by highest match percentage first.
+2. **Visual Badging:** Front-end cards display percentage match indicators:
+   * 🟩 **$\ge 90\%$:** Green badge (High Match)
+   * 🟧 **$75\% - 89\%$:** Amber badge (Good Match)
+   * ⬜ **$< 75\%$:** Gray badge (Moderate Match)
+
+
+
+---
+
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
