@@ -3,6 +3,7 @@ package models
 type Listing struct {
 	ID             string  `json:"id"`
 	Source         string  `json:"source"`
+	Title          string  `json:"title"`        // ← add this
 	Address        string  `json:"address"`
 	City           string  `json:"city"`
 	State          string  `json:"state"`
@@ -16,7 +17,7 @@ type Listing struct {
 	ListedDate     string  `json:"listedDate"`
 	Status         string  `json:"status"`
 	Description    string  `json:"description"`
-	RelevanceScore float64 `json:"relevanceScore"`
+	Score          float64 `json:"score"`          // ← rename from RelevanceScore
 }
 
 type CursorPayload struct {

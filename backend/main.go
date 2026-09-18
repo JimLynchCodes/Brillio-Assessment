@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -16,116 +17,319 @@ type Listing struct {
 	Bedrooms    int     `json:"bedrooms"`
 	City        string  `json:"city"`
 	Description string  `json:"description"`
+	Score       float64 `json:"score"`
 }
 
 type ListingResponse struct {
-	Items      []Listing `json:"items"`
-	NextCursor string    `json:"nextCursor"`
-	HasMore    bool      `json:"hasMore"`
-	Total      int       `json:"total"`
+	Items        []Listing `json:"items"`
+	NextCursor   string    `json:"nextCursor"`
+	HasMore      bool      `json:"hasMore"`
+	Total        int       `json:"total"`
+	TargetBudget *float64  `json:"targetBudget,omitempty"`
 }
 
-// In-memory dataset
 var mockListings = []Listing{
-	{ID: "1", Title: "Modern Downtown Condo", Price: 450000, Bedrooms: 2, City: "Austin", Description: "Luxury condo with city views and pool access."},
-	{ID: "2", Title: "Cozy Suburban Home", Price: 320000, Bedrooms: 3, City: "Austin", Description: "Spacious backyard, quiet neighborhood."},
-	{ID: "3", Title: "Beachfront Villa", Price: 850000, Bedrooms: 4, City: "Miami", Description: "Ocean views with private dock and modern interior."},
-	{ID: "4", Title: "Compact Studio Loft", Price: 210000, Bedrooms: 1, City: "Chicago", Description: "Near metro station, freshly renovated."},
-	{ID: "5", Title: "Family Residence", Price: 600000, Bedrooms: 4, City: "Austin", Description: "Large garage, modern kitchen, private pool."},
-	{ID: "6", Title: "Charming Craftsman Bungalow", Price: 380000, Bedrooms: 2, City: "Seattle", Description: "Hardwood floors, renovated kitchen, and vibrant garden."},
-	{ID: "7", Title: "High-rise Luxury Penthouse", Price: 1200000, Bedrooms: 3, City: "Miami", Description: "360-degree ocean skyline view with private elevator."},
-	{ID: "8", Title: "Affordable Starter Home", Price: 195000, Bedrooms: 2, City: "Chicago", Description: "Great location for first-time buyers near parks."},
+	{
+		ID:          "1",
+		Title:       "Modern Downtown Condo",
+		Price:       450000,
+		Bedrooms:    2,
+		City:        "Austin",
+		Description: "Luxury condo with city views and pool access.",
+	},
+	{
+		ID:          "2",
+		Title:       "Cozy Suburban Home",
+		Price:       320000,
+		Bedrooms:    3,
+		City:        "Austin",
+		Description: "Spacious backyard, quiet neighborhood.",
+	},
+	{
+		ID:          "3",
+		Title:       "Beachfront Villa",
+		Price:       850000,
+		Bedrooms:    4,
+		City:        "Miami",
+		Description: "Ocean views with private dock and modern interior.",
+	},
+	{
+		ID:          "4",
+		Title:       "Compact Studio Loft",
+		Price:       210000,
+		Bedrooms:    1,
+		City:        "Chicago",
+		Description: "Near metro station, freshly renovated.",
+	},
+	{
+		ID:          "5",
+		Title:       "Family Residence",
+		Price:       600000,
+		Bedrooms:    4,
+		City:        "Austin",
+		Description: "Large garage, modern kitchen, private pool.",
+	},
+	{
+		ID:          "6",
+		Title:       "Charming Craftsman Bungalow",
+		Price:       380000,
+		Bedrooms:    2,
+		City:        "Seattle",
+		Description: "Hardwood floors, renovated kitchen, and vibrant garden.",
+	},
 }
 
-func enableCORS(w *http.ResponseWriter) {
-	(*w).Header().Set("Access-Control-Allow-Origin", "*")
-	(*w).Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type")
+// calculateMatchScore calculates:
+//
+// max(
+//     0,
+//     100 - (abs(listingPrice - targetBudget) / targetBudget * 100)
+// )
+//
+// Examples:
+//
+// $450,000 listing / $450,000 target = 100.0
+// $500,000 listing / $450,000 target = 88.9
+// $320,000 listing / $450,000 target = 71.1
+// $850,000 listing / $450,000 target = 11.1
+func calculateMatchScore(listingPrice float64, targetBudget float64) float64 {
+	if targetBudget <= 0 ||
+		math.IsNaN(targetBudget) ||
+		math.IsInf(targetBudget, 0) {
+		return 0
+	}
+
+	if listingPrice < 0 ||
+		math.IsNaN(listingPrice) ||
+		math.IsInf(listingPrice, 0) {
+		return 0
+	}
+
+	difference := math.Abs(listingPrice - targetBudget)
+
+	percentageDifference := (difference / targetBudget) * 100
+
+	score := 100 - percentageDifference
+
+	// Clamp to [0, 100].
+	if score < 0 {
+		score = 0
+	}
+
+	if score > 100 {
+		score = 100
+	}
+
+	// Round to one decimal place.
+	score = math.Round(score*10) / 10
+
+	return score
 }
 
 func getListingsHandler(w http.ResponseWriter, r *http.Request) {
-	enableCORS(&w)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 
-	// Handle CORS preflight options request
+	w.Header().Set("Content-Type", "application/json")
+
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-	// Parse query parameters
 	query := r.URL.Query()
-	minPriceStr := query.Get("minPrice")
-	maxPriceStr := query.Get("maxPrice")
-	minBedsStr := query.Get("minBedrooms")
+
+	minPriceStr := strings.TrimSpace(query.Get("minPrice"))
+	maxPriceStr := strings.TrimSpace(query.Get("maxPrice"))
+	minBedsStr := strings.TrimSpace(query.Get("minBedrooms"))
+
 	city := strings.ToLower(strings.TrimSpace(query.Get("city")))
 	keyword := strings.ToLower(strings.TrimSpace(query.Get("keyword")))
 
+	// ---------------------------------------------------------
+	// TARGET BUDGET
+	// ---------------------------------------------------------
+
+	targetBudgetStr := strings.TrimSpace(query.Get("targetBudget"))
+
+	var targetBudget float64
+	hasTargetBudget := false
+
+	if targetBudgetStr != "" {
+
+		// Remove common formatting characters.
+		cleanBudget := strings.ReplaceAll(targetBudgetStr, "$", "")
+		cleanBudget = strings.ReplaceAll(cleanBudget, ",", "")
+		cleanBudget = strings.TrimSpace(cleanBudget)
+
+		parsedBudget, err := strconv.ParseFloat(cleanBudget, 64)
+
+		if err == nil && parsedBudget > 0 {
+			targetBudget = parsedBudget
+			hasTargetBudget = true
+		}
+	}
+
+	// Debug output so we can see EXACTLY what the frontend sent.
+	fmt.Printf(
+		"\nREQUEST: %s\n",
+		r.URL.String(),
+	)
+
+	fmt.Printf(
+		"targetBudget parameter: %q\n",
+		targetBudgetStr,
+	)
+
+	fmt.Printf(
+		"parsed targetBudget: %.2f\n",
+		targetBudget,
+	)
+
+	fmt.Printf(
+		"hasTargetBudget: %v\n\n",
+		hasTargetBudget,
+	)
+
+	// ---------------------------------------------------------
+	// FILTER LISTINGS
+	// ---------------------------------------------------------
+
+	var filtered []Listing
+
+	for _, item := range mockListings {
+
+		l := Listing{
+			ID:          item.ID,
+			Title:       item.Title,
+			Price:       item.Price,
+			Bedrooms:    item.Bedrooms,
+			City:        item.City,
+			Description: item.Description,
+
+			// Default is zero ONLY when there is no target budget.
+			Score: 0,
+		}
+
+		// Minimum price.
+		if minPriceStr != "" {
+
+			minPrice, err := strconv.ParseFloat(
+				strings.ReplaceAll(minPriceStr, ",", ""),
+				64,
+			)
+
+			if err == nil && l.Price < minPrice {
+				continue
+			}
+		}
+
+		// Maximum price.
+		if maxPriceStr != "" {
+
+			maxPrice, err := strconv.ParseFloat(
+				strings.ReplaceAll(maxPriceStr, ",", ""),
+				64,
+			)
+
+			if err == nil && l.Price > maxPrice {
+				continue
+			}
+		}
+
+		// Minimum bedrooms.
+		if minBedsStr != "" {
+
+			minBeds, err := strconv.Atoi(minBedsStr)
+
+			if err == nil && l.Bedrooms < minBeds {
+				continue
+			}
+		}
+
+		// City.
+		if city != "" &&
+			!strings.Contains(
+				strings.ToLower(l.City),
+				city,
+			) {
+			continue
+		}
+
+		// Keyword.
+		if keyword != "" {
+
+			titleMatches := strings.Contains(
+				strings.ToLower(l.Title),
+				keyword,
+			)
+
+			descriptionMatches := strings.Contains(
+				strings.ToLower(l.Description),
+				keyword,
+			)
+
+			if !titleMatches && !descriptionMatches {
+				continue
+			}
+		}
+
+		// ---------------------------------------------------------
+		// CALCULATE SCORE
+		// ---------------------------------------------------------
+
+		if hasTargetBudget {
+			l.Score = calculateMatchScore(
+				l.Price,
+				targetBudget,
+			)
+		}
+
+		fmt.Printf(
+			"Listing %s | price=$%.2f | target=$%.2f | score=%.1f\n",
+			l.ID,
+			l.Price,
+			targetBudget,
+			l.Score,
+		)
+
+		filtered = append(filtered, l)
+	}
+
+	// ---------------------------------------------------------
+	// SORT BY SCORE
+	// ---------------------------------------------------------
+
+	if hasTargetBudget {
+
+		sort.SliceStable(
+			filtered,
+			func(i, j int) bool {
+				return filtered[i].Score > filtered[j].Score
+			},
+		)
+	}
+
+	// ---------------------------------------------------------
+	// PAGINATION
+	// ---------------------------------------------------------
+
 	cursor := query.Get("cursor")
-	limitStr := query.Get("limit")
 
 	limit := 6
-	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-		limit = l
-	}
 
-	// Step 1: Apply Filter Logic
-	filtered := make([]Listing, 0)
-
-	for _, listing := range mockListings {
-		// Min Price Filter
-		if minPriceStr != "" {
-			if minP, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
-				if listing.Price < minP {
-					continue
-				}
-			}
-		}
-
-		// Max Price Filter
-		if maxPriceStr != "" {
-			if maxP, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
-				if listing.Price > maxP {
-					continue
-				}
-			}
-		}
-
-		// Min Bedrooms Filter
-		if minBedsStr != "" {
-			if minB, err := strconv.Atoi(minBedsStr); err == nil {
-				if listing.Bedrooms < minB {
-					continue
-				}
-			}
-		}
-
-		// City Filter
-		if city != "" {
-			if !strings.Contains(strings.ToLower(listing.City), city) {
-				continue
-			}
-		}
-
-		// Keyword Search (Matches Title or Description)
-		if keyword != "" {
-			titleMatch := strings.Contains(strings.ToLower(listing.Title), keyword)
-			descMatch := strings.Contains(strings.ToLower(listing.Description), keyword)
-			if !titleMatch && !descMatch {
-				continue
-			}
-		}
-
-		filtered = append(filtered, listing)
-	}
-
-	totalFilteredCount := len(filtered)
-
-	// Step 2: Apply Cursor Pagination
 	startIndex := 0
+
 	if cursor != "" {
+
 		for idx, item := range filtered {
+
 			if item.ID == cursor {
 				startIndex = idx + 1
 				break
@@ -134,39 +338,59 @@ func getListingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	endIndex := startIndex + limit
-	if endIndex > totalFilteredCount {
-		endIndex = totalFilteredCount
+
+	if endIndex > len(filtered) {
+		endIndex = len(filtered)
 	}
 
-	paginatedItems := []Listing{}
-	if startIndex < totalFilteredCount {
-		paginatedItems = filtered[startIndex:endIndex]
+	paginated := []Listing{}
+
+	if startIndex < len(filtered) {
+		paginated = filtered[startIndex:endIndex]
 	}
 
-	// Determine next cursor token
 	nextCursor := ""
-	hasMore := endIndex < totalFilteredCount
-	if hasMore && len(paginatedItems) > 0 {
-		nextCursor = paginatedItems[len(paginatedItems)-1].ID
+
+	hasMore := endIndex < len(filtered)
+
+	if hasMore && len(paginated) > 0 {
+		nextCursor = paginated[len(paginated)-1].ID
 	}
 
-	// Step 3: Write JSON Response
+	// ---------------------------------------------------------
+	// RESPONSE
+	// ---------------------------------------------------------
+
 	response := ListingResponse{
-		Items:      paginatedItems,
+		Items:      paginated,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-		Total:      totalFilteredCount,
+		Total:      len(filtered),
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if hasTargetBudget {
+		response.TargetBudget = &targetBudget
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		fmt.Printf("JSON encoding error: %v\n", err)
+		return
+	}
 }
 
 func main() {
-	http.HandleFunc("/api/listings", getListingsHandler)
+
+	http.HandleFunc(
+		"/api/listings",
+		getListingsHandler,
+	)
 
 	fmt.Println("Server running on http://localhost:8080")
+
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+		fmt.Printf(
+			"Server error: %v\n",
+			err,
+		)
 	}
 }
